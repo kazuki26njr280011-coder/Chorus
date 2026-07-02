@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Chorus — Multi-AI Interface</title>
+<meta name="description" content="複数のAIがひとつの声になって答える会話AIサイト、Chorus">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="%230b0b10"/><text x="32" y="43" font-family="Georgia,serif" font-size="32" fill="%23ffffff" text-anchor="middle">C</text><circle cx="49" cy="18" r="3" fill="%236fd6ff"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============ 1. ローディング画面 ============ -->
+<div id="screen-loading" class="screen center">
+  <div class="loading-inner">
+    <h1 class="wordmark">CHORUS</h1>
+    <div class="wordmark-sub">MULTI-AI INTERFACE</div>
+    <div class="loadbar"><div class="loadbar-fill" id="loadbarFill"></div></div>
+    <div class="loading-text">読み込み中<span class="dots"><i>.</i><i>.</i><i>.</i></span></div>
+  </div>
+</div>
+
+<!-- ============ 2. ログイン / 新規登録 ============ -->
+<div id="screen-auth" class="screen center hidden">
+  <div class="auth-card">
+    <h1 class="wordmark sm">CHORUS</h1>
+    <div class="wordmark-sub">MULTI-AI INTERFACE</div>
+
+    <div class="auth-tabs">
+      <button id="tabSignup" class="auth-tab active" type="button">新規登録</button>
+      <button id="tabLogin" class="auth-tab" type="button">ログイン</button>
+    </div>
+
+    <label class="field-label" for="authName">ユーザー名</label>
+    <input id="authName" class="text-input" type="text" maxlength="20" autocomplete="username" placeholder="例：カズキ" spellcheck="false">
+
+    <label class="field-label">PIN（4桁の数字）</label>
+    <div class="pin-row" id="pinRow">
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN 1桁目">
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN 2桁目">
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN 3桁目">
+      <input class="pin-box" type="password" inputmode="numeric" maxlength="1" autocomplete="off" aria-label="PIN 4桁目">
+    </div>
+
+    <div class="auth-error hidden" id="authError"></div>
+
+    <button id="authSubmit" class="btn primary full" type="button">アカウントを作成</button>
+    <p class="auth-note" id="authNote">作成すると <b>10,000</b> クレジットがもらえる</p>
+    <div class="demo-badge hidden" id="demoBadge">デモモード — Firebase未接続（データはこの端末のみに保存）</div>
+  </div>
+</div>
+
+<!-- ============ 3. アプリ本体 ============ -->
+<div id="screen-app" class="screen hidden">
+
+  <aside id="sidebar">
+    <div class="side-brand"><span class="wordmark xs">CHORUS</span></div>
+
+    <div class="side-label">AIモデル</div>
+    <div id="modelList" class="model-list"></div>
+
+    <div class="side-spacer"></div>
+
+    <div class="credit-box">
+      <div class="credit-label">クレジット残高</div>
+      <div class="credit-value"><span id="creditValue">0</span><span class="credit-unit">cr</span></div>
+      <button id="btnEarn" class="btn ghost slim full" type="button">＋ クレジットを増やす</button>
+    </div>
+
+    <div class="side-foot">
+      <div class="user-chip"><span class="user-dot"></span><span id="userName"></span></div>
+      <button id="btnSettings" class="icon-btn" title="設定" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button id="btnLogout" class="icon-btn" title="ログアウト" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <div id="backdrop" class="backdrop hidden"></div>
+
+  <main class="chat">
+    <header class="chat-head">
+      <button id="btnMenu" class="icon-btn menu-btn" title="メニュー" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+      </button>
+      <div class="head-model">
+        <span class="model-avatar sm" id="headAvatar"></span>
+        <div class="head-model-txt">
+          <div class="head-model-name" id="headModelName">—</div>
+          <div class="head-model-cost" id="headModelCost"></div>
+        </div>
+      </div>
+      <div class="head-spacer"></div>
+      <div class="head-credits" id="headCredits">0 cr</div>
+      <button id="btnClear" class="btn ghost slim" type="button">履歴クリア</button>
+    </header>
+
+    <div id="messages" class="messages"></div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="メッセージを送る…"></textarea>
+        <button id="btnSend" class="send-btn" title="送信" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+      <div class="composer-hint" id="composerHint"></div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ モーダル（中身はJSが組み立てる） ============ -->
+<div id="modal" class="modal hidden">
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+  <div class="modal-panel" id="modalPanel"></div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
