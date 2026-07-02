@@ -505,17 +505,22 @@ function thinkingNode(m){
   body.appendChild(bub);
   row.appendChild(body);
 
+  const swapTo = t => {
+    txt.classList.add('swap');
+    setTimeout(() => {
+      txt.textContent = t + '…';
+      txt.classList.remove('swap');
+    }, 250);
+  };
   let i = 0;
   const iv = setInterval(() => {
     i = (i + 1) % m.thinking.length;
-    txt.classList.add('swap');
-    setTimeout(() => {
-      txt.textContent = m.thinking[i] + '…';
-      txt.classList.remove('swap');
-    }, 250);
+    swapTo(m.thinking[i]);
   }, Math.max(1200, Math.floor(m.minThinkMs / m.thinking.length)));
 
   row._stop = () => clearInterval(iv);
+  /* 本物のパイプラインの進行に合わせて表示を切替（自動サイクルは停止する） */
+  row._setStage = t => { clearInterval(iv); swapTo(t); };
   return row;
 }
 
@@ -553,7 +558,7 @@ async function onSend(){
 
   const t0 = Date.now();
   let reply = null, failed = false;
-  try{ reply = await callAI(text, m); }
+  try{ reply = await callAI(text, m, think._setStage); }
   catch(err){ console.error(err); failed = true; }
 
   const rest = m.minThinkMs - (Date.now() - t0);
@@ -578,22 +583,21 @@ async function onSend(){
   inputEl.focus();
 }
 
-/* ---------- Miibo API 呼び出し ---------- */
-async function callAI(text, m){
-  const { apiKey, endpoint } = CONFIG.miibo;
-  if(!apiKey || !m.agentId){
-    await sleep(500);
-    return '（デモ応答）まだMiiboに接続されてないよ。\n'
-      + 'js/config.js の miibo.apiKey と、モデル「' + m.name + '」の agentId を設定すると、'
-      + 'ここに本物のAIの返事が届く。手順は README.md を見てね。';
-  }
-  const res = await fetch(endpoint, {
+/* ============================================================
+   Miibo API 呼び出し（AIパイプライン）
+   ・multi  : 質問→ChatGPT/Claude/Geminiに同時送信→全回答を統合役へ
+   ・direct : 1体のエージェントに送るだけ（Max）
+   ============================================================ */
+
+/* 1体のエージェントに発話を送って返事をもらう */
+async function miiboAsk(agent, utterance){
+  const res = await fetch(CONFIG.miibo.endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      api_key: apiKey,
-      agent_id: m.agentId,
-      utterance: text,
+      api_key: agent.apiKey,
+      agent_id: agent.agentId,
+      utterance: utterance,
       uid: 'chorus_' + me.uid,
     }),
   });
@@ -602,6 +606,78 @@ async function callAI(text, m){
   const out = data && data.bestResponse && data.bestResponse.utterance;
   if(!out) throw new Error('Miibo empty response');
   return out;
+}
+
+/* このモデルを動かすのに足りない設定のリストを返す */
+function missingKeys(m){
+  const miss = [];
+  const chk = (obj, path) => {
+    if(!obj || !obj.apiKey)  miss.push(path + '.apiKey');
+    if(!obj || !obj.agentId) miss.push(path + '.agentId');
+  };
+  if(m.type === 'multi'){
+    chk(CONFIG.workers && CONFIG.workers.chatgpt, 'workers.chatgpt');
+    chk(CONFIG.workers && CONFIG.workers.claude,  'workers.claude');
+    chk(CONFIG.workers && CONFIG.workers.gemini,  'workers.gemini');
+  }
+  chk(m.agent, 'models「' + m.name + '」の agent');
+  return miss;
+}
+
+function demoReply(m, missing){
+  return '（デモ応答）「' + m.name + '」を動かすには、js/config.js の以下が未設定だよ：\n\n・'
+    + missing.join('\n・')
+    + '\n\n全部設定すると本物のAIパイプラインが動く。手順は README.md を見てね。';
+}
+
+/* モデルの方式に応じて呼び分け */
+async function callAI(text, m, setStage){
+  const missing = missingKeys(m);
+  if(missing.length){
+    await sleep(800);
+    return demoReply(m, missing);
+  }
+  if(m.type === 'multi') return callMulti(text, m, setStage);
+  return miiboAsk(m.agent, text);
+}
+
+/* MultiAi系：3体に同時に質問 → 全回答をまとめて統合役へ */
+async function callMulti(text, m, setStage){
+  const workers = [
+    ['ChatGPT', CONFIG.workers.chatgpt, 'chatgpt'],
+    ['Claude',  CONFIG.workers.claude,  'claude'],
+    ['Gemini',  CONFIG.workers.gemini,  'gemini'],
+  ];
+
+  setStage('ChatGPT・Claude・Gemini に質問中');
+  let done = 0;
+  let okCount = 0;
+  const answers = {};
+
+  await Promise.all(workers.map(async ([label, agent, key]) => {
+    try{
+      answers[key] = await miiboAsk(agent, text);
+      okCount++;
+    }catch(e){
+      console.warn(label + ' の呼び出しに失敗:', e);
+      answers[key] = '（' + label + ' は回答できなかった）';
+    }
+    done++;
+    setStage(label + ' の回答を受信（' + done + '/3）');
+  }));
+
+  if(okCount === 0) throw new Error('素材AI（ChatGPT/Claude/Gemini）が全て失敗した');
+
+  /* テンプレートに質問と3体の回答を埋め込む */
+  const fill = (tpl, key, val) => tpl.split('{' + key + '}').join(val);
+  let prompt = CONFIG.multiPrompt;
+  prompt = fill(prompt, 'question', text);
+  prompt = fill(prompt, 'chatgpt', answers.chatgpt);
+  prompt = fill(prompt, 'claude',  answers.claude);
+  prompt = fill(prompt, 'gemini',  answers.gemini);
+
+  setStage(m.name + ' が統合中');
+  return await miiboAsk(m.agent, prompt);
 }
 
 inputEl.addEventListener('input', () => { autoGrow(); updateSendState(); });
