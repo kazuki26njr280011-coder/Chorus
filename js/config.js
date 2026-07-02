@@ -27,16 +27,16 @@ const CONFIG = {
   /* ---------- ① 素材AI（MultiAi系の裏方3体） ---------- */
   workers: {
     chatgpt: {
-      apiKey:  "",   // ← ChatGPT用エージェントのAPIキー
-      agentId: "",   // ← ChatGPT用エージェントのID
+      apiKey:  "ee6ba86b-53e3-4171-8344-b467c7cbb8b919f026c4daa170",   // ← ChatGPT用エージェントのAPIキー
+      agentId: "a76816c9-812c-428e-b9a0-ef17a58f1f8419f026b9125f3",   // ← ChatGPT用エージェントのID
     },
     claude: {
-      apiKey:  "",   // ← Claude用エージェントのAPIキー
-      agentId: "",   // ← Claude用エージェントのID
+      apiKey:  "4f085292-54bb-41d1-b9e2-b8cd9a950db819f026492b920e",   // ← Claude用エージェントのAPIキー
+      agentId: "5bb691be-5752-40f5-a48d-bbcd3f33091c",   // ← Claude用エージェントのID
     },
     gemini: {
-      apiKey:  "",   // ← Gemini用エージェントのAPIキー
-      agentId: "",   // ← Gemini用エージェントのID
+      apiKey:  "c44d01b1-4023-4886-9c6c-a718f6ca8a9819f026854e1199",   // ← Gemini用エージェントのAPIキー
+      agentId: "3eab2e54-0dee-459a-82f0-efef4556ac4c19f026812d6359",   // ← Gemini用エージェントのID
     },
   },
 
@@ -59,8 +59,8 @@ const CONFIG = {
       tagline: "Gemini・GPT・Claudeが考え、GPT最先端モデルが最高の答えに統合する。",
       type: "multi",                 // 3体に聞いてから統合する方式
       agent: {                       // ← 統合役（MultiAi本体）のキーとID
-        apiKey:  "",
-        agentId: "",
+        apiKey:  "eb863532-56cc-4d87-9a70-ead9b239b3f419f026e07751a7",
+        agentId: "202d890f-c947-4d6f-8c6b-2119553ec14d19f026dbdf63bc",
       },
       cost: 200,
       icon: "assets/icon-authentic.png",
@@ -73,8 +73,8 @@ const CONFIG = {
       tagline: "Authenticの進化版。さらに深く考える分、時間とクレジットを多く使う。",
       type: "multi",
       agent: {                       // ← 統合役（XHigh本体）のキーとID
-        apiKey:  "",
-        agentId: "",
+        apiKey:  "0b201e85115683e09ea6c12f375240047a4748f2488f009d205fd7ecb65b4bc7",
+        agentId: "10691d95-ef02-4627-97c2-a924dc46a218",
       },
       cost: 800,
       icon: "assets/icon-xhigh.png",
@@ -87,8 +87,8 @@ const CONFIG = {
       tagline: "雑なプロンプトも磨き上げられて、Claude Fable5 が答える。",
       type: "direct",                // 1体だけで完結する方式
       agent: {                       // ← MaxエージェントのキーとID
-        apiKey:  "",
-        agentId: "",
+        apiKey:  "a443d20f253fee26efc830b4fcfcbefb33015628b73b9bec948bf29027de6628",
+        agentId: "21691ab6-a04d-459d-ac0a-c50a91f5d02c",
       },
       cost: 400,
       icon: "assets/icon-max.png",
