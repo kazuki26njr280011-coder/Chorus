@@ -437,6 +437,65 @@ function scrollBottom(){
   box.scrollTop = box.scrollHeight;
 }
 
+/* ---------- AI回答の整形（簡易Markdown → 安全なHTML） ---------- */
+function escapeHtml(s){
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function inlineMd(s){
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+/* 改行のない長文は「。」ごとに2文ずつ段落に分けて読みやすく */
+function autoBreak(t){
+  if(/\n/.test(t) || t.length < 160) return t;
+  const parts = t.match(/[^。]+。?/g) || [t];
+  const out = [];
+  for(let i = 0; i < parts.length; i += 2) out.push(parts.slice(i, i + 2).join(''));
+  return out.join('\n\n');
+}
+function mdToHtml(src){
+  const lines = escapeHtml(String(src).trim()).split('\n');
+  const out = [];
+  let para = [], list = null, listTag = '';
+  const flushPara = () => { if(para.length){ out.push('<p>' + para.map(inlineMd).join('<br>') + '</p>'); para = []; } };
+  const flushList = () => { if(list){ out.push('<' + listTag + '>' + list.join('') + '</' + listTag + '>'); list = null; } };
+
+  for(let i = 0; i < lines.length; i++){
+    const line = lines[i];
+
+    /* コードブロック ``` 〜 ``` */
+    if(line.startsWith('```')){
+      flushPara(); flushList();
+      const buf = [];
+      i++;
+      while(i < lines.length && !lines[i].startsWith('```')){ buf.push(lines[i]); i++; }
+      out.push('<pre><code>' + buf.join('\n') + '</code></pre>');
+      continue;
+    }
+    /* 見出し # 〜 #### */
+    const h = line.match(/^#{1,4}\s+(.+)/);
+    if(h){ flushPara(); flushList(); out.push('<div class="md-h">' + inlineMd(h[1]) + '</div>'); continue; }
+
+    /* 箇条書き（- * ・）と番号リスト（1. など） */
+    const ul = line.match(/^\s*(?:[-*]\s+|・\s*)(.+)/);
+    const ol = ul ? null : line.match(/^\s*\d+[.．)）]\s+(.+)/);
+    if(ul || ol){
+      flushPara();
+      const tag = ul ? 'ul' : 'ol';
+      if(list && listTag !== tag) flushList();
+      if(!list){ list = []; listTag = tag; }
+      list.push('<li>' + inlineMd((ul || ol)[1]) + '</li>');
+      continue;
+    }
+    /* 空行 = 段落の区切り */
+    if(!line.trim()){ flushPara(); flushList(); continue; }
+    para.push(line);
+  }
+  flushPara(); flushList();
+  return out.join('');
+}
+
 function msgNode(m){
   if(m.role === 'sys') return el('div', 'sys-divider', m.text);
   const row = el('div', 'msg-row ' + m.role);
@@ -445,7 +504,9 @@ function msgNode(m){
     const mm = CONFIG.models.find(x => x.id === m.modelId) || model;
     row.appendChild(avatarNode(mm, 'sm msg-avatar'));
     body.appendChild(el('div', 'msg-meta', mm.name));
-    body.appendChild(el('div', 'msg-bubble' + (m.error ? ' error' : ''), m.text));
+    const bub = el('div', 'msg-bubble md' + (m.error ? ' error' : ''));
+    bub.innerHTML = mdToHtml(autoBreak(m.text));   /* escapeHtml済みなので安全 */
+    body.appendChild(bub);
   }else{
     body.appendChild(el('div', 'msg-bubble', m.text));
   }
