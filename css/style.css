@@ -377,6 +377,34 @@ body::before{
 }
 .msg-bubble.error{border-color:rgba(255,107,122,.3);color:var(--text-2)}
 
+/* AI回答の整形表示（簡易Markdown） */
+.msg-bubble.md{white-space:normal}
+.msg-bubble.md p{margin:0}
+.msg-bubble.md p + p{margin-top:10px}
+.msg-bubble.md .md-h{font-weight:700;color:#fff;font-size:14px;margin:14px 0 6px}
+.msg-bubble.md .md-h:first-child{margin-top:0}
+.msg-bubble.md ul,.msg-bubble.md ol{margin:8px 0;padding-left:22px}
+.msg-bubble.md li{margin:4px 0}
+.msg-bubble.md li::marker{color:var(--accent)}
+.msg-bubble.md strong{color:#fff;font-weight:600}
+.msg-bubble.md code{
+  background:rgba(255,255,255,.07);
+  border:1px solid var(--border);
+  border-radius:6px;
+  padding:1px 6px;
+  font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  font-size:12.5px;
+}
+.msg-bubble.md pre{
+  background:#08080c;
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px 14px;
+  overflow-x:auto;
+  margin:10px 0;
+}
+.msg-bubble.md pre code{background:none;border:0;padding:0;display:block;line-height:1.65}
+
 .sys-divider{
   display:flex;align-items:center;gap:12px;
   color:var(--text-3);font-size:10.5px;letter-spacing:.1em;
