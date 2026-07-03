@@ -176,5 +176,11 @@ const CONFIG = {
      firebaseConfig の中身をそのままここにコピペ。
      空のままだとデモモード（この端末のブラウザ内にだけ保存）。 */
   firebase: {
+    apiKey: "AIzaSyDXLgPOVA1jEHBymTOX3vO0-FTIKivuYYA",
+    authDomain: "chorus-bbdca.firebaseapp.com",
+    projectId: "chorus-bbdca",
+    storageBucket: "chorus-bbdca.firebasestorage.app",
+    messagingSenderId: "882702463021",
+    appId: "1:882702463021:web:d5b9e9043db491723d48a4",
+    measurementId: "G-G4EHBCZTW2"
   },
-};
