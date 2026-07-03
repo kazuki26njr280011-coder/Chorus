@@ -138,8 +138,8 @@ const CONFIG = {
 
   /* ---------- ⑥ クレジット ---------- */
   credits: {
-    signupBonus: 300,
-    timesBonus: 7000,
+    signupBonus: 10000,
+    timesBonus: 90000,
     timesChannel: "#times_みんなの雑談_allin",
   },
 
@@ -168,6 +168,13 @@ const CONFIG = {
     {
       version: "v1.0",
       date: "2026-07-03",
-      items: ["初回リリース：アカウント・クレジット・times特典・3モデル・履歴連携"],
+      items: ["初回リリース：アカウント・クレジット・times特典・3モデル・Miibo連携"],
     },
   ],
+
+  /* ---------- ⑧ Firebase ----------
+     firebaseConfig の中身をそのままここにコピペ。
+     空のままだとデモモード（この端末のブラウザ内にだけ保存）。 */
+  firebase: {
+  },
+};
