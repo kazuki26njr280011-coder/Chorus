@@ -37,6 +37,10 @@ function el(tag, cls, text){
 /* モデルアイコン（画像が無い時は頭文字を表示） */
 function fillAvatar(span, model){
   span.replaceChildren();
+  if(!model.icon){
+    span.appendChild(el('span', 'monogram', model.name.charAt(0).toUpperCase()));
+    return;
+  }
   const img = document.createElement('img');
   img.alt = '';
   img.onerror = () => { img.remove(); span.appendChild(el('span', 'monogram', model.name.charAt(0).toUpperCase())); };
@@ -498,10 +502,14 @@ function mdToHtml(src){
 
 function msgNode(m){
   if(m.role === 'sys') return el('div', 'sys-divider', m.text);
+  if(m.role === 'cmd') return cmdNode(m);
+  if(m.role === 'debate') return debateNode(m);
   const row = el('div', 'msg-row ' + m.role);
   const body = el('div', 'msg-body');
   if(m.role === 'ai'){
-    const mm = CONFIG.models.find(x => x.id === m.modelId) || model;
+    const mm = m.custom
+      ? { name: m.metaLabel, icon: m.iconSrc || '' }
+      : (CONFIG.models.find(x => x.id === m.modelId) || model);
     row.appendChild(avatarNode(mm, 'sm msg-avatar'));
     body.appendChild(el('div', 'msg-meta', mm.name));
     const bub = el('div', 'msg-bubble md' + (m.error ? ' error' : ''));
@@ -521,7 +529,7 @@ function renderAllMessages(){
     const empty = el('div', 'empty-state');
     empty.appendChild(avatarNode(model, 'xl'));
     empty.appendChild(el('div', 'empty-title', model.name + ' に話しかけてみよう'));
-    empty.appendChild(el('div', 'empty-sub', 'Enterで送信 ／ Shift+Enterで改行'));
+    empty.appendChild(el('div', 'empty-sub', 'Enterで送信 ／ Shift+Enterで改行 ／ 「/」でコマンドモード'));
     const chips = el('div', 'chips');
     ['自己紹介して', '面白い雑学を教えて', '今日の話し相手になって'].forEach(t => {
       const c = el('button', 'chip', t);
@@ -593,20 +601,33 @@ function autoGrow(){
   inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
 }
 function updateSendState(){
-  $('#btnSend').disabled = busy || !inputEl.value.trim();
+  $('#btnSend').disabled = busy || debateActive || !inputEl.value.trim();
 }
 
 async function onSend(){
   const text = inputEl.value.trim();
-  if(!text || busy || !me) return;
-  if(me.credits < model.cost){ openInsufficientModal(); return; }
+  if(!text || busy || !me || debateActive) return;
 
-  busy = true;
-  updateSendState();
+  /* コマンドモード（「/」始まり） */
+  if(text.startsWith('/')){
+    inputEl.value = '';
+    autoGrow(); updateSendState(); hidePalette();
+    await runCommand(text);
+    inputEl.focus();
+    return;
+  }
+
+  if(me.credits < model.cost){ openInsufficientModal(); return; }
   inputEl.value = '';
   autoGrow();
+  await performSend(model, text);
+  inputEl.focus();
+}
 
-  const m = model;  /* 送信時点のモデルで固定 */
+/* 任意のモデルで1往復（通常送信と /multi が共用） */
+async function performSend(m, text){
+  busy = true;
+  updateSendState();
   pushMsg({ role: 'user', text });
 
   try{ await store.addCredits(-m.cost); }
@@ -641,7 +662,6 @@ async function onSend(){
 
   busy = false;
   updateSendState();
-  inputEl.focus();
 }
 
 /* ============================================================
@@ -651,7 +671,7 @@ async function onSend(){
    ============================================================ */
 
 /* 1体のエージェントに発話を送って返事をもらう */
-async function miiboAsk(agent, utterance){
+async function miiboAsk(agent, utterance, uid){
   const res = await fetch(CONFIG.miibo.endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -659,7 +679,7 @@ async function miiboAsk(agent, utterance){
       api_key: agent.apiKey,
       agent_id: agent.agentId,
       utterance: utterance,
-      uid: 'chorus_' + me.uid,
+      uid: uid || ('chorus_' + me.uid),
     }),
   });
   if(!res.ok) throw new Error('Miibo HTTP ' + res.status);
@@ -741,14 +761,455 @@ async function callMulti(text, m, setStage){
   return await miiboAsk(m.agent, prompt);
 }
 
-inputEl.addEventListener('input', () => { autoGrow(); updateSendState(); });
+/* ============================================================
+   コマンドモード（「/」でコマンドパレット）
+   ============================================================ */
+const CMDS = [
+  { cmd: '/help',   args: '',                       desc: 'コマンドと使えるAIの一覧を表示' },
+  { cmd: '/direct', args: '<ai名> <メッセージ>',      desc: '指定AIに直接送信（例: /direct claude やあ）' },
+  { cmd: '/multi',  args: '<モード名> <メッセージ>',   desc: '指定モードでマルチAI実行（authentic / xhigh）' },
+  { cmd: '/debate', args: '',                       desc: '対論モードのセットアップを開く' },
+  { cmd: '/clear',  args: '',                       desc: '会話履歴をクリア' },
+];
+const WORKER_LABELS = { chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini' };
+let palIndex = 0;
+
+function paletteEl(){ return $('#cmdPalette'); }
+function hidePalette(){ paletteEl().classList.add('hidden'); }
+function applyPalette(c){
+  inputEl.value = c.cmd + (c.args ? ' ' : '');
+  autoGrow(); updateSendState(); renderPalette(); inputEl.focus();
+}
+function renderPalette(){
+  const pal = paletteEl();
+  const v = inputEl.value;
+  if(!v.startsWith('/') || debateActive){ hidePalette(); return; }
+  const word = v.split(/\s+/)[0].toLowerCase();
+  if(v.includes(' ') && CMDS.some(c => c.cmd === word)){ hidePalette(); return; }
+  const list = CMDS.filter(c => c.cmd.startsWith(word));
+  if(!list.length){ hidePalette(); return; }
+  if(palIndex >= list.length) palIndex = 0;
+  pal.replaceChildren();
+  const head = el('div', 'pal-head');
+  head.appendChild(el('span', 'pal-title', 'COMMAND MODE'));
+  head.appendChild(el('span', 'pal-hint', '↑↓選択 · Tab補完 · Enter実行 · Esc閉じる'));
+  pal.appendChild(head);
+  list.forEach((c, i) => {
+    const item = el('div', 'pal-item' + (i === palIndex ? ' sel' : ''));
+    const l1 = el('div', 'pal-cmd');
+    l1.appendChild(el('span', 'pal-prompt', '❯'));
+    l1.appendChild(el('span', 'pal-name', c.cmd));
+    if(c.args) l1.appendChild(el('span', 'pal-args', ' ' + c.args));
+    item.appendChild(l1);
+    item.appendChild(el('div', 'pal-desc', c.desc));
+    item.addEventListener('mousedown', e => { e.preventDefault(); palIndex = i; applyPalette(c); });
+    pal.appendChild(item);
+  });
+  pal._list = list;
+  pal.classList.remove('hidden');
+}
+
+/* コマンド実行結果のターミナル風カード */
+function cmdNode(m){
+  const card = el('div', 'cmd-card');
+  const head = el('div', 'cmd-card-head');
+  head.appendChild(el('span', 'cmd-dot r'));
+  head.appendChild(el('span', 'cmd-dot y'));
+  head.appendChild(el('span', 'cmd-dot g'));
+  head.appendChild(el('span', 'cmd-card-title', 'CHORUS COMMAND'));
+  card.appendChild(head);
+  const bodyEl = el('div', 'cmd-card-body');
+  const line = el('div', 'cmd-line');
+  line.appendChild(el('span', 'cmd-prompt', '❯'));
+  line.appendChild(el('span', 'cmd-input', m.cmd));
+  bodyEl.appendChild(line);
+  const out = el('div', 'cmd-out' + (m.error ? ' err' : ''), m.text);
+  bodyEl.appendChild(out);
+  card.appendChild(bodyEl);
+  return card;
+}
+
+function pushCmd(cmdText, outText, isErr){
+  pushMsg({ role: 'cmd', cmd: cmdText, text: outText, error: !!isErr });
+}
+
+function directList(){
+  const ws = Object.keys(WORKER_LABELS).filter(k => CONFIG.workers && CONFIG.workers[k]);
+  return ws.concat(CONFIG.models.filter(x => x.type === 'direct').map(x => x.id));
+}
+function helpText(){
+  return 'コマンド一覧\n'
+    + '  /help                    この一覧を表示\n'
+    + '  /direct <ai名> <文>      指定AIに直接送信\n'
+    + '  /multi <モード> <文>     指定モードでマルチAI実行\n'
+    + '  /debate                  対論モードを開く\n'
+    + '  /clear                   会話履歴をクリア\n\n'
+    + '使えるAI名（/direct）: ' + directList().join(' / ') + '\n'
+    + 'モード名（/multi）: ' + CONFIG.models.filter(x => x.type === 'multi').map(x => x.id).join(' / ');
+}
+
+function resolveDirectTarget(nameRaw){
+  const n = (nameRaw || '').toLowerCase();
+  const alias = { gpt: 'chatgpt', chatgpt: 'chatgpt', claude: 'claude', gemini: 'gemini' };
+  if(alias[n] && CONFIG.workers && CONFIG.workers[alias[n]]){
+    return {
+      label: WORKER_LABELS[alias[n]],
+      agent: CONFIG.workers[alias[n]],
+      cost: CONFIG.directCost || 100,
+      icon: '',
+    };
+  }
+  const mdl = CONFIG.models.find(x => x.type === 'direct' && (x.id.toLowerCase() === n || x.name.toLowerCase() === n));
+  if(mdl) return { label: mdl.name, agent: mdl.agent, cost: mdl.cost, icon: mdl.icon };
+  return null;
+}
+
+async function runCommand(raw){
+  const parts = raw.trim().split(/\s+/);
+  const cmd = (parts[0] || '').toLowerCase();
+
+  if(cmd === '/help'){ pushCmd(raw, helpText()); return; }
+  if(cmd === '/clear'){ chat = []; saveChat(); renderAllMessages(); return; }
+  if(cmd === '/debate'){ openDebateSetup(); return; }
+
+  if(cmd === '/direct'){
+    const target = resolveDirectTarget(parts[1]);
+    const msg = parts.slice(2).join(' ');
+    if(!target){ pushCmd(raw, '不明なAI名だよ。使えるAI: ' + directList().join(' / ') + '\n例: /direct claude こんにちは', true); return; }
+    if(!msg){ pushCmd(raw, 'メッセージが空だよ。例: /direct ' + parts[1] + ' こんにちは', true); return; }
+    await sendDirect(target, msg, raw);
+    return;
+  }
+
+  if(cmd === '/multi'){
+    const modeRaw = (parts[1] || '').toLowerCase();
+    const mdl = modeRaw ? CONFIG.models.find(x => x.type === 'multi' && x.id.toLowerCase().startsWith(modeRaw)) : null;
+    const msg = parts.slice(2).join(' ');
+    if(!mdl){ pushCmd(raw, '不明なモードだよ。使えるモード: ' + CONFIG.models.filter(x => x.type === 'multi').map(x => x.id).join(' / '), true); return; }
+    if(!msg){ pushCmd(raw, 'メッセージが空だよ。例: /multi ' + mdl.id + ' こんにちは', true); return; }
+    if(me.credits < mdl.cost){ openInsufficientModal(); return; }
+    await performSend(mdl, msg);
+    return;
+  }
+
+  pushCmd(raw, '不明なコマンド。/help で一覧を見られるよ。', true);
+}
+
+/* /direct の実行 */
+async function sendDirect(target, text, raw){
+  if(!target.agent || !target.agent.apiKey || !target.agent.agentId){
+    pushCmd(raw, '「' + target.label + '」のAPIキー / エージェントIDが js/config.js に未設定だよ。', true);
+    return;
+  }
+  if(me.credits < target.cost){ openInsufficientModal(); return; }
+  busy = true; updateSendState();
+  pushMsg({ role: 'user', text });
+  try{ await store.addCredits(-target.cost); }catch(e){}
+  renderCredits(true);
+
+  const think = thinkingNode({ name: target.label, icon: target.icon || '', thinking: [target.label + ' が思考中'], minThinkMs: 700 });
+  $('#messages').appendChild(think);
+  scrollBottom();
+
+  const t0 = Date.now();
+  let reply = null, failed = false;
+  try{ reply = await miiboAsk(target.agent, text); }
+  catch(e){ console.error(e); failed = true; }
+  const rest = 700 - (Date.now() - t0);
+  if(rest > 0) await sleep(rest);
+  think._stop(); think.remove();
+
+  if(failed){
+    try{ await store.addCredits(target.cost); }catch(e){}
+    renderCredits(true);
+    pushMsg({ role: 'ai', custom: true, metaLabel: target.label + ' · direct', iconSrc: target.icon || '', error: true,
+      text: '接続エラー（クレジットは返却したよ）。APIキー・エージェントIDを確認してね。' });
+  }else{
+    pushMsg({ role: 'ai', custom: true, metaLabel: target.label + ' · direct', iconSrc: target.icon || '', text: reply });
+  }
+  busy = false; updateSendState();
+}
+
+/* ============================================================
+   対論モード
+   ============================================================ */
+let debateActive = false;
+let debateStop = false;
+
+function debateConf(){
+  const d = CONFIG.debate || {};
+  return {
+    costPerTurn: d.costPerTurn || 150,
+    prompt: d.prompt ||
+      'あなたはディベート大会に出場している討論者です。\nテーマ: {theme}\nあなたの立場: {position}\n相手: {opponent}\n\nルール（絶対厳守）:\n・絶対に相手に同意しない。「それもいいですね」「一理ある」等の同調・譲歩表現は禁止\n・常に自分の立場を貫き、相手の主張の矛盾や弱点を具体的に指摘して反論する\n・根拠か具体例を必ず1つ以上入れる\n・250文字以内。挨拶や前置きは不要、いきなり主張から始める\n\n{context}',
+    firstContext: d.firstContext || 'あなたが先攻です。最初の主張を述べてください。',
+    replyContext: d.replyContext || '相手の直前の主張:\n「{last}」\nこれに真っ向から反論し、自分の立場を主張してください。',
+  };
+}
+function buildDebatePrompt(cfg, side, other, last){
+  const dc = debateConf();
+  const ctx = (last == null) ? dc.firstContext : dc.replyContext.split('{last}').join(last);
+  return dc.prompt
+    .split('{theme}').join(cfg.theme)
+    .split('{position}').join(side.position)
+    .split('{opponent}').join(other.label + '（立場: ' + other.position + '）')
+    .split('{context}').join(ctx);
+}
+
+/* 対論の吹き出し（Aは左・青系、Bは右・琥珀系） */
+function debateNode(m){
+  const row = el('div', 'msg-row ai debate ' + (m.side === 'a' ? 'debate-a' : 'debate-b'));
+  const body = el('div', 'msg-body');
+  body.appendChild(el('div', 'msg-meta', m.label + ' ─ 「' + m.position + '」派'));
+  const bub = el('div', 'msg-bubble md');
+  bub.innerHTML = mdToHtml(autoBreak(m.text));
+  body.appendChild(bub);
+  row.appendChild(body);
+  return row;
+}
+
+function showDebateBar(){
+  const bar = $('#debateBar');
+  bar.replaceChildren();
+  bar.appendChild(el('span', 'debate-live'));
+  bar.appendChild(el('span', 'debate-info', '対論中'));
+  const stat = el('span', 'debate-stat', 'ターン 0 ・ 0 cr');
+  stat.id = 'debateStat';
+  bar.appendChild(stat);
+  bar.appendChild(el('span', 'head-spacer'));
+  const stop = el('button', 'btn danger slim', '■ 停止');
+  stop.type = 'button';
+  stop.addEventListener('click', () => { debateStop = true; stop.disabled = true; stop.textContent = '停止中…'; });
+  bar.appendChild(stop);
+  bar.classList.remove('hidden');
+  $('.composer').classList.add('hidden');
+  $('#composerHint').classList.add('hidden');
+}
+function hideDebateBar(){
+  $('#debateBar').classList.add('hidden');
+  $('.composer').classList.remove('hidden');
+  $('#composerHint').classList.remove('hidden');
+}
+function updateDebateBar(turn, spent){
+  const s = $('#debateStat');
+  if(s) s.textContent = 'ターン ' + turn + ' ・ ' + fmt(spent) + ' cr';
+}
+
+/* 対論セットアップ画面 */
+function openDebateSetup(){
+  const dc = debateConf();
+  const box = el('div');
+  box.appendChild(el('div', 'modal-eyebrow', 'DEBATE'));
+  box.appendChild(el('div', 'modal-title', '対論モード'));
+  box.appendChild(el('p', 'modal-desc',
+    '2体のAIが1つのテーマで討論する。停止ボタンを押すまで交互に主張し続ける（1ターン ' + fmt(dc.costPerTurn) + ' cr消費）。'));
+
+  const sTheme = el('div', 'm-section');
+  sTheme.appendChild(el('div', 'm-section-title', 'テーマ'));
+  const themeIn = el('input', 'text-input');
+  themeIn.type = 'text';
+  themeIn.placeholder = '例：制服は必要か';
+  themeIn.maxLength = 60;
+  sTheme.appendChild(themeIn);
+  box.appendChild(sTheme);
+
+  const picks = { a: null, b: null, first: 'a' };
+  const posIn = {};
+  const chipRows = {};
+  const workerKeys = Object.keys(WORKER_LABELS);
+
+  const refresh = () => {
+    ['a', 'b'].forEach(sk => {
+      const otherPick = picks[sk === 'a' ? 'b' : 'a'];
+      Array.from(chipRows[sk].children).forEach(ch => {
+        ch.classList.toggle('on', picks[sk] === ch.dataset.k);
+        ch.disabled = otherPick === ch.dataset.k;   /* 同じAIは選べない */
+      });
+    });
+  };
+  const mkSide = (sideKey, title, posEx) => {
+    const s = el('div', 'm-section');
+    s.appendChild(el('div', 'm-section-title', title));
+    const row = el('div', 'chip-row');
+    workerKeys.forEach(k => {
+      const c = el('button', 'pick-chip', WORKER_LABELS[k]);
+      c.type = 'button';
+      c.dataset.k = k;
+      c.addEventListener('click', () => { picks[sideKey] = k; refresh(); });
+      row.appendChild(c);
+    });
+    chipRows[sideKey] = row;
+    s.appendChild(row);
+    const p = el('input', 'text-input field-gap');
+    p.type = 'text';
+    p.placeholder = '立場（例：' + posEx + '）';
+    p.maxLength = 30;
+    posIn[sideKey] = p;
+    s.appendChild(p);
+    return s;
+  };
+  box.appendChild(mkSide('a', '討論者A', '必要'));
+  box.appendChild(mkSide('b', '討論者B', '不必要'));
+
+  const sFirst = el('div', 'm-section');
+  sFirst.appendChild(el('div', 'm-section-title', '先攻'));
+  const fRow = el('div', 'chip-row');
+  const fa = el('button', 'pick-chip on', 'A が先攻');
+  const fb = el('button', 'pick-chip', 'B が先攻');
+  fa.type = fb.type = 'button';
+  fa.addEventListener('click', () => { picks.first = 'a'; fa.classList.add('on'); fb.classList.remove('on'); });
+  fb.addEventListener('click', () => { picks.first = 'b'; fb.classList.add('on'); fa.classList.remove('on'); });
+  fRow.appendChild(fa);
+  fRow.appendChild(fb);
+  sFirst.appendChild(fRow);
+  box.appendChild(sFirst);
+
+  const errP = el('p', 'modal-desc err-text field-gap hidden');
+  box.appendChild(errP);
+  const showErr = t => { errP.textContent = t; errP.classList.remove('hidden'); };
+
+  const actions = el('div', 'modal-actions');
+  const start = el('button', 'btn primary', '対論を開始');
+  const cancel = el('button', 'btn ghost', '閉じる');
+  start.type = cancel.type = 'button';
+  cancel.addEventListener('click', closeModal);
+  start.addEventListener('click', () => {
+    errP.classList.add('hidden');
+    const theme = themeIn.value.trim();
+    const pa = posIn.a.value.trim(), pb = posIn.b.value.trim();
+    if(!theme) return showErr('テーマを入力してね');
+    if(!picks.a || !picks.b) return showErr('AとBのAIを選んでね');
+    if(!pa || !pb) return showErr('両方の立場を入力してね');
+    for(const k of [picks.a, picks.b]){
+      const w = CONFIG.workers && CONFIG.workers[k];
+      if(!w || !w.apiKey || !w.agentId) return showErr(WORKER_LABELS[k] + ' のAPIキー/エージェントIDが config.js に未設定だよ');
+    }
+    if(me.credits < dc.costPerTurn) return showErr('クレジットが足りない（1ターン ' + fmt(dc.costPerTurn) + ' cr）');
+    runDebate({
+      theme,
+      a: { key: picks.a, label: WORKER_LABELS[picks.a], position: pa },
+      b: { key: picks.b, label: WORKER_LABELS[picks.b], position: pb },
+      first: picks.first,
+    });
+  });
+  actions.appendChild(start);
+  actions.appendChild(cancel);
+  box.appendChild(actions);
+
+  openModal(box);
+}
+
+/* 対論の本体ループ：停止を押すまで交互に主張し続ける */
+async function runDebate(cfg){
+  debateActive = true;
+  debateStop = false;
+  closeModal();
+  closeSidebar();
+  showDebateBar();
+  updateSendState();
+  const dc = debateConf();
+  const sid = Date.now().toString(36);
+  pushMsg({ role: 'sys', text: '対論開始「' + cfg.theme + '」 ' + cfg.a.label + '（' + cfg.a.position + '）vs ' + cfg.b.label + '（' + cfg.b.position + '）' });
+
+  let turnSide = cfg.first;
+  let last = null, turn = 0, spent = 0;
+
+  while(!debateStop){
+    const side = cfg[turnSide];
+    const other = cfg[turnSide === 'a' ? 'b' : 'a'];
+    if(me.credits < dc.costPerTurn){
+      pushMsg({ role: 'sys', text: 'クレジット不足のため自動停止' });
+      break;
+    }
+    try{ await store.addCredits(-dc.costPerTurn); }catch(e){}
+    renderCredits(true);
+    spent += dc.costPerTurn;
+    updateDebateBar(turn + 1, spent);
+
+    const think = thinkingNode({ name: side.label, icon: '', thinking: [side.label + ' が主張を準備中'], minThinkMs: 1200 });
+    $('#messages').appendChild(think);
+    scrollBottom();
+
+    const t0 = Date.now();
+    let reply = null, failed = false;
+    try{
+      reply = await miiboAsk(CONFIG.workers[side.key], buildDebatePrompt(cfg, side, other, last), 'chorus_debate_' + sid + '_' + side.key);
+    }catch(e){ console.error(e); failed = true; }
+    const rest = 1500 - (Date.now() - t0);
+    if(rest > 0) await sleep(rest);
+    think._stop();
+    think.remove();
+
+    if(failed){
+      try{ await store.addCredits(dc.costPerTurn); }catch(e){}
+      renderCredits(true);
+      spent -= dc.costPerTurn;
+      pushMsg({ role: 'sys', text: '接続エラーのため自動停止（このターン分は返却）' });
+      break;
+    }
+    pushMsg({ role: 'debate', side: turnSide, label: side.label, position: side.position, text: reply });
+    last = reply;
+    turn++;
+    turnSide = turnSide === 'a' ? 'b' : 'a';
+
+    /* 読みやすさ＋API制限対策の小休止（停止ボタンに即反応できるよう小刻みに待つ） */
+    for(let w = 0; w < 14 && !debateStop; w++) await sleep(100);
+  }
+
+  pushMsg({ role: 'sys', text: '対論終了 ─ ' + turn + 'ターン / ' + fmt(spent) + ' cr 消費' });
+  hideDebateBar();
+  debateActive = false;
+  updateSendState();
+}
+
+/* ============================================================
+   アップデート履歴
+   ============================================================ */
+function changelogNode(){
+  const wrap = el('div');
+  const list = CONFIG.updates || [];
+  list.forEach(u => {
+    const s = el('div', 'm-section');
+    const head = el('div', 'upd-head');
+    head.appendChild(el('span', 'upd-ver', u.version));
+    head.appendChild(el('span', 'upd-date', u.date));
+    s.appendChild(head);
+    const ul = el('ul', 'upd-list');
+    (u.items || []).forEach(it => ul.appendChild(el('li', null, it)));
+    s.appendChild(ul);
+    wrap.appendChild(s);
+  });
+  if(!list.length) wrap.appendChild(el('p', 'modal-desc', '履歴はまだないよ。config.js の updates に追加できる。'));
+  return wrap;
+}
+
+/* ---------- 入力欄のイベント ---------- */
+inputEl.addEventListener('input', () => { autoGrow(); updateSendState(); renderPalette(); });
+inputEl.addEventListener('blur', () => setTimeout(hidePalette, 150));
 inputEl.addEventListener('keydown', e => {
+  const pal = paletteEl();
+  if(!pal.classList.contains('hidden')){
+    const list = pal._list || [];
+    if(e.key === 'ArrowDown'){ e.preventDefault(); palIndex = (palIndex + 1) % list.length; renderPalette(); return; }
+    if(e.key === 'ArrowUp'){ e.preventDefault(); palIndex = (palIndex - 1 + list.length) % list.length; renderPalette(); return; }
+    if(e.key === 'Escape'){ hidePalette(); return; }
+    if(e.key === 'Tab'){ e.preventDefault(); if(list[palIndex]) applyPalette(list[palIndex]); return; }
+    if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){
+      const sel = list[palIndex];
+      if(sel && !inputEl.value.includes(' ') && inputEl.value.trim() !== sel.cmd){
+        e.preventDefault();
+        applyPalette(sel);
+        return;
+      }
+    }
+  }
   if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){
     e.preventDefault();
     onSend();
   }
 });
 $('#btnSend').addEventListener('click', onSend);
+$('#btnDebate').addEventListener('click', () => { if(me && !debateActive && !busy) openDebateSetup(); });
 
 /* ============================================================
    モーダル
@@ -816,10 +1277,27 @@ function creditGuideNode(isNewAccount){
 }
 
 /* ---------- 設定 ---------- */
-function openSettings(highlightTimes){
+function openSettings(highlightTimes, tab){
   const box = el('div');
   box.appendChild(el('div', 'modal-eyebrow', 'SETTINGS'));
   box.appendChild(el('div', 'modal-title', '設定'));
+
+  /* タブ：設定 / アップデート履歴 */
+  const tabs = el('div', 'auth-tabs mtabs');
+  const tMain = el('button', 'auth-tab' + (tab === 'updates' ? '' : ' active'), '設定');
+  const tUpd  = el('button', 'auth-tab' + (tab === 'updates' ? ' active' : ''), 'アップデート履歴');
+  tMain.type = tUpd.type = 'button';
+  tMain.addEventListener('click', () => openSettings(false, 'main'));
+  tUpd.addEventListener('click', () => openSettings(false, 'updates'));
+  tabs.appendChild(tMain);
+  tabs.appendChild(tUpd);
+  box.appendChild(tabs);
+
+  if(tab === 'updates'){
+    box.appendChild(changelogNode());
+    openModal(box);
+    return;
+  }
 
   /* アカウント情報 */
   const s1 = el('div', 'm-section');
