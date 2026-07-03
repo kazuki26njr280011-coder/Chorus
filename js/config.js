@@ -138,8 +138,8 @@ const CONFIG = {
 
   /* ---------- ⑥ クレジット ---------- */
   credits: {
-    signupBonus: 10000,
-    timesBonus: 90000,
+    signupBonus: 300,
+    timesBonus: 7000,
     timesChannel: "#times_みんなの雑談_allin",
   },
 
