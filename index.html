@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=3">
+<link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
 
@@ -97,14 +97,17 @@
       </div>
       <div class="head-spacer"></div>
       <div class="head-credits" id="headCredits">0 cr</div>
+      <button id="btnDebate" class="btn ghost slim" type="button">対論</button>
       <button id="btnClear" class="btn ghost slim" type="button">履歴クリア</button>
     </header>
 
     <div id="messages" class="messages"></div>
 
     <div class="composer-wrap">
+      <div id="debateBar" class="debate-bar hidden"></div>
       <div class="composer">
-        <textarea id="input" rows="1" placeholder="メッセージを送る…"></textarea>
+        <div id="cmdPalette" class="cmd-palette hidden"></div>
+        <textarea id="input" rows="1" placeholder="メッセージを送る…（「/」でコマンド）"></textarea>
         <button id="btnSend" class="send-btn" title="送信" type="button" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
         </button>
@@ -120,7 +123,7 @@
   <div class="modal-panel" id="modalPanel"></div>
 </div>
 
-<script src="js/config.js?v=3"></script>
-<script src="js/app.js?v=3"></script>
+<script src="js/config.js?v=4"></script>
+<script src="js/app.js?v=4"></script>
 </body>
 </html>
